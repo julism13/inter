@@ -4,13 +4,15 @@ import time
 
 
 def load_data_in_buffer_sr(file_path, header_size, data_buffer):
+    num_seq = 0
     with open(file_path, 'rb') as file:
         while True:
             available_space = LENGTH_PACKET - header_size
             data = file.read(available_space)
             if not data:
                 break
-            data_buffer.append(data)
+            data_buffer[num_seq] = data
+            num_seq +=1
     file.close()
 
 
@@ -18,9 +20,10 @@ def send_packet_to_receiver_sr(transmitter, receiver_address,
                                protocol, operation, file_name,
                                seq_abs_transmitter, verbose,
                                data_buffer_transmitter,
-                               no_ack_packets_transmitter):
+                               no_ack_packets_transmitter,
+                               length_data_buffer):
     end_flag_transmitter = (
-        1 if seq_abs_transmitter == len(data_buffer_transmitter) - 1 else 0)
+        1 if seq_abs_transmitter == length_data_buffer - 1 else 0)
     ring_seq = seq_abs_transmitter % MAX_SEQ
 
     if verbose == 1:
@@ -42,16 +45,19 @@ def send_packet_to_receiver_sr(transmitter, receiver_address,
 def relay_no_ack_packet_to_receiver_sr(transmitter, receiver_address,
                                        protocol, operation, file_name,
                                        verbose, data_buffer_transmitter,
-                                       no_ack_packets_transmitter):
+                                       no_ack_packets_transmitter,
+                                       length_data_buffer):
     current_time = time.time()
 
     for ring_seq, packet_info in list(no_ack_packets_transmitter.items()):
         if current_time - packet_info['time'] > TIMEOUT:
+            print(f"[REENVIO] packet: {ring_seq} | seq_abs: {packet_info['abs_seq']} ")
             send_packet_to_receiver_sr(transmitter, receiver_address,
                                        protocol, operation, file_name,
                                        packet_info['abs_seq'], verbose,
                                        data_buffer_transmitter,
-                                       no_ack_packets_transmitter)
+                                       no_ack_packets_transmitter,
+                                       length_data_buffer)
 
 
 def receiver_received_future_packet(ring_seq, expected_ring_seq):
