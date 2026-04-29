@@ -4,6 +4,7 @@ from lib.constants import LENGTH_PACKET, END_FLAG, \
                           OPERATION_DOWNLOAD, SAW_PROTOCOL, SR_PROTOCOL
 from lib.selective_repeat import manage_receiver_window_sr
 import socket
+import time
 
 
 def selective_repeat_download(operation, seq, end, data, ip,
@@ -19,11 +20,16 @@ def selective_repeat_download(operation, seq, end, data, ip,
 
     expected_seq = 0
     data_buffer = {}
+    client.settimeout(10.0)
 
     with open(file_path, 'wb') as file:
         while True:
-            packet, server_address = client.recvfrom(LENGTH_PACKET)
-
+            try:
+                packet, server_address = client.recvfrom(LENGTH_PACKET)
+            except socket.timeout:
+                print(f"[SR] Global Timeout from {server_address} in upload."
+                      f" Connection loss.")
+                break
             keep_going, expected_seq = manage_receiver_window_sr(
                                             packet,
                                             client,
@@ -89,6 +95,8 @@ def stop_and_wait_dowload(operation, seq, end, data, ip,
         print("ERROR: Could not connect to the server")
         return
 
+    client.settimeout(None)
+
     file = open(file_path, 'wb')
 
     receive_data_from_transmitter(client, seq, file, verbose)
@@ -99,6 +107,7 @@ def stop_and_wait_dowload(operation, seq, end, data, ip,
 
 
 def main():
+    start_time = time.perf_counter()
     tokens = parse_download()
     operation = OPERATION_DOWNLOAD
     seq = 0
@@ -120,6 +129,11 @@ def main():
         selective_repeat_download(operation, seq, end, data, ip,
                                   port, file_path, file_name, protocol,
                                   verbose, client)
+        end_time = time.perf_counter()
+        duration = end_time - start_time
+        minutos, segundos = divmod(duration, 60)
+        print(f"Tiempo total: {int(minutos):02d}:{int(segundos):02d}")
+        print(f"Transferencia completada en: {duration:.4f} segundos")
 
 
 main()
