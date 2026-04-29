@@ -54,7 +54,7 @@ def exec_download_sr(server, client_address, client_queue,
 
         return
 
-    buffer_data = []
+    buffer_data = {}
     send_base = 0
     next_seq_num = 0
     no_ack_packets = {}
@@ -63,17 +63,20 @@ def exec_download_sr(server, client_address, client_queue,
                        f"|{file_name}|00|0|").encode('utf-8'))
     load_data_in_buffer_sr(destination_path, header_size, buffer_data)
 
+    length_data = len(buffer_data)
+
     if not buffer_data:
         buffer_data = [b'']
 
-    while send_base < len(buffer_data):
+    while send_base < length_data:
         while (
             next_seq_num < send_base + WINDOW_SIZE
-            and next_seq_num < len(buffer_data)
+            and next_seq_num < length_data
         ):
             send_packet_to_receiver_sr(server, client_address, protocol,
                                        operation, file_name, next_seq_num,
-                                       verbose, buffer_data, no_ack_packets)
+                                       verbose, buffer_data, no_ack_packets,
+                                       length_data)
             next_seq_num += 1
 
         try:
@@ -95,13 +98,30 @@ def exec_download_sr(server, client_address, client_queue,
                 try:
                     ack_packet = client_queue.get_nowait()
                     ack_seq = int(ack_packet.decode('utf-8'))
+
+                    distancia = (ack_seq - (send_base % MAX_SEQ) + MAX_SEQ) % MAX_SEQ
+                    seq_absoluto = send_base + distancia
+
                     if ack_seq in no_ack_packets:
                         del no_ack_packets[ack_seq]
+                        if seq_absoluto in buffer_data:
+                            del buffer_data[seq_absoluto]
+
                     while (
                         (send_base % MAX_SEQ) not in no_ack_packets
                         and send_base < next_seq_num
                     ):
                         send_base += 1
+
+                    while (
+                        next_seq_num < send_base + WINDOW_SIZE
+                        and next_seq_num < length_data
+                    ):
+                        send_packet_to_receiver_sr(server, client_address, protocol,
+                                                   operation, file_name, next_seq_num,
+                                                   verbose, buffer_data, no_ack_packets,
+                                                   length_data)
+                        next_seq_num += 1                        
                 except queue.Empty:
                     break
 
@@ -110,7 +130,8 @@ def exec_download_sr(server, client_address, client_queue,
 
         relay_no_ack_packet_to_receiver_sr(server, client_address, protocol,
                                            operation, file_name, verbose,
-                                           buffer_data, no_ack_packets)
+                                           buffer_data, no_ack_packets,
+                                           length_data)
 
     if verbose == 1:
         print(f"[SR] Download from {client_address} successfully!")
