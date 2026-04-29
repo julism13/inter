@@ -1,8 +1,9 @@
+import time
 from lib.args_parser import parse_upload
 from lib.relay import extend_wait
 from lib.constants import LENGTH_PACKET, END_FLAG, OPERATION_UPLOAD, \
                           SAW_PROTOCOL, SR_PROTOCOL, WINDOW_SIZE, \
-                          MAX_SEQ
+                          MAX_SEQ, TIMEOUT
 from lib.selective_repeat import load_data_in_buffer_sr, \
                                  send_packet_to_receiver_sr, \
                                  relay_no_ack_packet_to_receiver_sr
@@ -32,7 +33,7 @@ import select
 
 def selective_repeat_upload(operation, seq, end, ip, port,
                             file_path, file_name, protocol, verbose, client):
-    buffer_data = []
+    buffer_data = {}
     send_base = 0
     next_seq_num = 0
     no_ack_packets = {}
@@ -43,39 +44,62 @@ def selective_repeat_upload(operation, seq, end, ip, port,
 
     load_data_in_buffer_sr(file_path, header_size, buffer_data)
 
-    while send_base < len(buffer_data):
+    length_data = len(buffer_data)
+
+    client.setblocking(False)
+
+    while send_base < length_data:
         while (
             next_seq_num < send_base + WINDOW_SIZE
-            and next_seq_num < len(buffer_data)
+            and next_seq_num < length_data
         ):
             send_packet_to_receiver_sr(client, server_address, protocol,
                                        operation, file_name, next_seq_num,
-                                       verbose, buffer_data, no_ack_packets)
+                                       verbose, buffer_data, no_ack_packets,
+                                       length_data)
             next_seq_num += 1
+        ready, _, _ = select.select([client], [], [], 0.03)
+        if ready:
+            try:
+                while True:
+                    ack_packet, _ = client.recvfrom(LENGTH_PACKET)
 
-        try:
-            while True:
-                ready = select.select([client], [], [], 0.01)
-                if not ready[0]:
-                    break
+                    ack_seq = int(ack_packet.decode('utf-8'))
 
-                ack_packet, _ = client.recvfrom(LENGTH_PACKET)
-                ack_seq = int(ack_packet.decode('utf-8'))
+                # eiliminamos clave-valor de diccionario que ya recibió el ack.
+                    distancia = (ack_seq - (send_base % MAX_SEQ) + MAX_SEQ) % MAX_SEQ
+                    seq_absoluto = send_base + distancia
 
-                if ack_seq in no_ack_packets:
-                    del no_ack_packets[ack_seq]
+                    if ack_seq in no_ack_packets:
+                        del no_ack_packets[ack_seq]
+                        if seq_absoluto in buffer_data:
+                            del buffer_data[seq_absoluto]
 
-                while (
-                    (send_base % MAX_SEQ) not in no_ack_packets
-                    and send_base < next_seq_num
-                ):
-                    send_base += 1
-        except Exception:
-            pass
+                    while (
+                        (send_base % MAX_SEQ) not in no_ack_packets
+                        and send_base < next_seq_num
+                    ):
+                        send_base += 1
+
+                    # tan rapido se libere espacio en la ventana, enviar nuevos paquetes
+                    while (
+                        next_seq_num < send_base + WINDOW_SIZE
+                        and next_seq_num < length_data
+                    ):
+                        send_packet_to_receiver_sr(client, server_address, protocol,
+                                                   operation, file_name, next_seq_num,
+                                                   verbose, buffer_data, no_ack_packets,
+                                                   length_data)
+                        next_seq_num += 1
+            except BlockingIOError:
+                pass
+            except Exception:
+                pass
 
         relay_no_ack_packet_to_receiver_sr(client, server_address, protocol,
                                            operation, file_name, verbose,
-                                           buffer_data, no_ack_packets)
+                                           buffer_data, no_ack_packets,
+                                           length_data)
 
     client.close()
     print("[SR] File upload successfully!")
@@ -135,6 +159,7 @@ def stop_and_wait_upload(operation, seq, end, ip,
 
 
 def main():
+    start_time = time.perf_counter()
     tokens = parse_upload()
     operation = OPERATION_UPLOAD
     seq = 0
@@ -159,6 +184,11 @@ def main():
         selective_repeat_upload(operation, seq, end, ip,
                                 port, file_path, file_name,
                                 protocol, verbose, client)
+        end_time = time.perf_counter()
+        duration = end_time - start_time
+        minutos, segundos = divmod(duration, 60)
+        print(f"Tiempo total: {int(minutos):02d}:{int(segundos):02d}")
+        print(f"Transferencia completada en: {duration:.4f} segundos")
 
 
 main()
